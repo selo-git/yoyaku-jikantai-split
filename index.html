@@ -1018,8 +1018,14 @@ button, select, input { font: inherit; color: inherit; }
 
       var noteCol = colIndex(model.cols.course);
       var memoCol = model.cols.memo ? colIndex(model.cols.memo) : 0;
+      // 文字幅：ブラウザから実測の関数（opts.measure）が渡されればそれを使い、なければ見積もる
+      var measure = function (text, bold) {
+        var em = opts && opts.measure ? opts.measure(text, bold) : null;
+        return em == null ? textEm(text, bold) : em;
+      };
       var need = {};
       var headNeed = {};
+      var bodyNeed = {};
       var spanNeed = [];
       var allRows = head.slice();
       blocks.forEach(function (b) {
@@ -1027,10 +1033,12 @@ button, select, input { font: inherit; color: inherit; }
       });
       allRows.forEach(function (cells, k) {
         cells.forEach(function (c) {
-          var em = textEm(c.t, c.b);
+          var em = c.t ? measure(c.t, c.b) : 0;
           if (c.span > 1) spanNeed.push({ c1: c.col, c2: c.col + c.span - 1, em: em });
           else if (em > (need[c.col] || 0)) need[c.col] = em;
-          if (k < head.length && c.span === 1 && em > (headNeed[c.col] || 0)) headNeed[c.col] = em;
+          if (c.span !== 1) return;
+          var bucket = k < head.length ? headNeed : bodyNeed;
+          if (em > (bucket[c.col] || 0)) bucket[c.col] = em;
         });
       });
       var widen = function (em) { return em * 1.12 + 0.8; }; // 余白とフォント差のぶん少し広め
@@ -1039,9 +1047,10 @@ button, select, input { font: inherit; color: inherit; }
       var MEMO_PCT = memoCol ? 8 : 0; // 「当日の詳細メモ」は手書き用に一定の幅を残す
       var NOTE_MIN_EM = 24; // 備考の列は最低でも24文字ぶん
       var keepOneLine = [model.cols.id, model.cols.name, model.cols.start, model.cols.end].map(colIndex);
+      var nextCols = model.cols.next.map(colIndex).filter(function (c) { return visible.indexOf(c) >= 0; });
       var w = {};
       visible.forEach(function (i) {
-        if (i === noteCol || i === memoCol) return;
+        if (i === noteCol || i === memoCol || nextCols.indexOf(i) >= 0) return;
         w[i] = Math.max(need[i] || 0, 1.5);
       });
       spanNeed.forEach(function (sp) {
@@ -1052,8 +1061,6 @@ button, select, input { font: inherit; color: inherit; }
       });
       Object.keys(w).forEach(function (i) { w[i] = widen(w[i]); });
 
-      // 備考の列が狭くなりすぎるときは、確認事項・エリア・次講座の列を縮めて折り返させる。
-      // 見出しの幅までは残し、それより広い部分を同じ割合で削る
       var fixedSum = 0;
       var floorSum = 0;
       var extraSum = 0;
@@ -1067,7 +1074,27 @@ button, select, input { font: inherit; color: inherit; }
         floorSum += floor[i];
         extraSum += w[i] - floor[i];
       });
-      var room = PAGE_EM * (1 - MEMO_PCT / 100) - NOTE_MIN_EM - fixedSum;
+      var avail = PAGE_EM * (1 - MEMO_PCT / 100);
+
+      // 次講座は文字を小さくして1行に収める（基本 85%）。備考の幅が足りない日は 70% まで小さくする
+      function nextWidths(scale) {
+        var out = { sum: 0 };
+        nextCols.forEach(function (c) {
+          out[c] = Math.max(widen((bodyNeed[c] || 0) * scale), widen(Math.max(headNeed[c] || 0, 2)));
+          out.sum += out[c];
+        });
+        return out;
+      }
+      var nextScale = 0.85;
+      var nw = nextWidths(nextScale);
+      while (nextScale > 0.7 + 1e-9 && fixedSum + floorSum + nw.sum + NOTE_MIN_EM > avail) {
+        nextScale -= 0.05;
+        nw = nextWidths(nextScale);
+      }
+      nextCols.forEach(function (c) { w[c] = nw[c]; });
+
+      // それでも備考の列が狭いときは、確認事項・エリアの列を見出しの幅まで縮めて折り返させる
+      var room = avail - NOTE_MIN_EM - fixedSum - nw.sum;
       if (floorSum + extraSum > room) {
         var keep = extraSum > 0 ? Math.min(Math.max((room - floorSum) / extraSum, 0), 1) : 0;
         Object.keys(floor).forEach(function (i) { w[i] = floor[i] + (w[i] - floor[i]) * keep; });
@@ -1078,7 +1105,9 @@ button, select, input { font: inherit; color: inherit; }
         if (c === memoCol) return MEMO_PCT + "%";
         return w[c].toFixed(2) + "em";
       });
-      return { title: model.title, cols: cols, head: head, blocks: blocks };
+      var small = {};
+      nextCols.forEach(function (c) { small[c] = Math.round(nextScale * 100); }); // 文字の大きさ（%）
+      return { title: model.title, cols: cols, small: small, head: head, blocks: blocks };
     }
 
     async function build(model, selected) {
@@ -1411,6 +1440,7 @@ button, select, input { font: inherit; color: inherit; }
         var cell = el(tag, "c" + c.col + (c.b ? " b" : "") + " al-" + c.al, c.t);
         if (c.span > 1) cell.colSpan = c.span;
         if (fill) cell.style.backgroundColor = fill;
+        if (tag === "td" && data.small && data.small[c.col]) cell.style.fontSize = data.small[c.col] + "%";
         tr.appendChild(cell);
       });
       return tr;
@@ -1745,6 +1775,22 @@ button, select, input { font: inherit; color: inherit; }
   }
 
   // ---- 印刷（保存せずにそのまま印刷） ----
+  // 列幅を決めるために、印刷に使うフォント（.x-sheet と同じ指定）で文字幅を実測する
+  var PRINT_FONT = '"Meiryo UI", Meiryo, "BIZ UDPGothic", "Hiragino Sans", sans-serif';
+  var measureCtx;
+  function measureEm(text, bold) {
+    if (measureCtx === undefined) {
+      try { measureCtx = document.createElement("canvas").getContext("2d"); } catch (e) { measureCtx = null; }
+    }
+    if (!measureCtx) return null; // 測れない環境では core 側の見積もりを使う
+    measureCtx.font = (bold ? "700 " : "400 ") + "100px " + PRINT_FONT;
+    var max = 0;
+    String(text).split(/\r?\n/).forEach(function (line) {
+      max = Math.max(max, measureCtx.measureText(line).width / 100);
+    });
+    return max;
+  }
+
   function fillPrint(ks) {
     var root = $("print");
     root.replaceChildren();
@@ -1756,7 +1802,7 @@ button, select, input { font: inherit; color: inherit; }
       var list = st.result.lists[k];
       if (!list.length) return;
       var caption = S.SLOT_DEFS[k].label + "（" + rangeLabel(k) + "）" + list.length + "名";
-      var opts = { pageEm: PAGE[st.orient].pageEm, hide: [] };
+      var opts = { pageEm: PAGE[st.orient].pageEm, hide: [], measure: measureEm };
       if (!st.printCols.next3) opts.hide.push("次講座③");
       if (!st.printCols.memo) opts.hide.push("当日の詳細メモ");
       root.append(S.renderPrintSheet(document, splitter.printData(st.model, list, opts), caption));
@@ -1766,8 +1812,11 @@ button, select, input { font: inherit; color: inherit; }
 
   function printSlots(ks) {
     if (st.busy) return;
-    if (!fillPrint(ks)) return;
-    window.print();
+    // フォントの読み込みを待ってから幅を測る
+    var ready = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+    ready.then(function () {
+      if (fillPrint(ks)) window.print();
+    });
   }
 
   // ボタンを使わずに Ctrl+P で印刷したときは、3つの時間帯をまとめて出す
