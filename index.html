@@ -317,7 +317,7 @@ button, select, input { font: inherit; color: inherit; }
 <main class="page">
   <header class="head">
     <h1><span class="glyphs" aria-hidden="true"><span>朝</span><span>昼</span><span>晩</span></span>予約一覧 時間帯分け</h1>
-    <p>システムから出力した受講生予約一覧（.xlsx）を、朝・昼・晩の3つのファイルに分けます。罫線や灰色の色分けなどの書式は元のファイルのまま書き出します。</p>
+    <p>システムから出力した受講生予約一覧（.xlsx）を、朝・昼・晩の3つのファイルに分けます。書式は元のファイルのまま、A4で印刷したときに長い備考が見切れないよう折り返して書き出します。</p>
   </header>
 
   <section class="panel" aria-label="ファイルと設定">
@@ -355,7 +355,7 @@ button, select, input { font: inherit; color: inherit; }
     <div class="bar">
       <div>
         <h2 id="outTitle">書き出し</h2>
-        <p>受講生の並び順は元のファイルのまま。灰色・白の色分けは各ファイルの先頭から振り直します。</p>
+        <p>受講生の並び順は元のファイルのまま。灰色・白の色分けは各ファイルの先頭から振り直し、備考は「受講中講座名」〜「次講座③」の幅に広げて折り返します。</p>
       </div>
       <button type="button" class="btn" id="saveAll" disabled>3つとも保存</button>
     </div>
@@ -505,6 +505,47 @@ button, select, input { font: inherit; color: inherit; }
         if (w > max) max = w;
       });
       return max;
+    }
+
+    // 折り返し後の行数の見積もり。文字幅はメイリオUI 11pt の実測値（1em = 14.67px）を少し広めに取っている
+    var EM_PX = 14.667;
+    function charEm(code) {
+      if (code === 0x20) return 0.35;
+      if (code >= 0x30 && code <= 0x39) return 0.63;
+      if (code >= 0x41 && code <= 0x5a) return 0.75;
+      if (code >= 0x61 && code <= 0x7a) return 0.62;
+      if (code < 0x7f) return 0.5;
+      if (code >= 0xff61 && code <= 0xff9f) return 0.5;
+      if (code === 0x3001 || code === 0x3002 || code === 0x30fb) return 0.67;
+      if (code >= 0x3041 && code <= 0x309f) return 0.85;
+      if (code >= 0x30a0 && code <= 0x30ff) return 0.8;
+      return 1;
+    }
+
+    function wrapLines(text, px) {
+      var avail = Math.max(EM_PX, (px - 7) * 0.97);
+      var total = 0;
+      String(text).split(/\r?\n/).forEach(function (para) {
+        var lines = 1;
+        var x = 0;
+        (para.match(/[!-~]+|[\s\S]/g) || []).forEach(function (tok) {
+          var w = 0;
+          for (var i = 0; i < tok.length; i++) w += charEm(tok.charCodeAt(i)) * EM_PX;
+          if (x + w <= avail) { x += w; return; }
+          if (tok.length > 1 && w <= avail) { lines++; x = w; return; } // 英単語は途中で切らずに次の行へ
+          for (var j = 0; j < tok.length; j++) {
+            var cw = charEm(tok.charCodeAt(j)) * EM_PX;
+            if (x + cw > avail && x > 0) { lines++; x = 0; }
+            x += cw;
+          }
+        });
+        total += lines;
+      });
+      return total;
+    }
+
+    function tidyNote(text) {
+      return String(text).replace(/^(?:[ \t　]*\r?\n)+/, "").replace(/[\s　]+$/, "");
     }
 
     // 日付セルは表示形式（m/d/yy, m/d/yy h:mm）の文字列にして幅を測る
@@ -737,9 +778,23 @@ button, select, input { font: inherit; color: inherit; }
         return { r: row.r, units: row.units };
       });
 
+      var mergeList = [];
+      if (mergeCellsEl) {
+        children(mergeCellsEl, "mergeCell").forEach(function (m) {
+          var parts = (m.getAttribute("ref") || "").split(":");
+          var a = splitRef(parts[0]);
+          var b = splitRef(parts[1] || parts[0]);
+          if (a && b) mergeList.push({ r1: a.row, r2: b.row, c1: colIndex(a.col), c2: colIndex(b.col) });
+        });
+      }
+
       return {
         buffer: buffer,
         paths: paths,
+        strings: strings,
+        cols: C,
+        headerR: headerR,
+        mergeList: mergeList,
         autoCols: autoCols,
         widthRows: widthRows,
         sheetXml: sheetXml,
@@ -790,7 +845,16 @@ button, select, input { font: inherit; color: inherit; }
         c.removeAttribute("applyFill");
         return ser.serializeToString(c);
       });
+      var fulls = xfs.map(function (xf) { return ser.serializeToString(xf); });
       var fillOf = function (i) { return xfs[i] ? xfs[i].getAttribute("fillId") || "0" : null; };
+      function addXf(xf, key) {
+        cellXfsEl.appendChild(xf);
+        xfs.push(xf);
+        keys.push(key);
+        fulls.push(ser.serializeToString(xf));
+        cellXfsEl.setAttribute("count", String(xfs.length));
+        return xfs.length - 1;
+      }
       var restyleCache = new Map();
       function restyle(s, targetFill) {
         var fill = fillOf(s);
@@ -806,14 +870,139 @@ button, select, input { font: inherit; color: inherit; }
           c.setAttribute("fillId", targetFill);
           var af = model.bandApplyFill[targetFill];
           if (af != null) c.setAttribute("applyFill", af);
-          cellXfsEl.appendChild(c);
-          xfs.push(c);
-          keys.push(keys[s]);
-          found = xfs.length - 1;
-          cellXfsEl.setAttribute("count", String(xfs.length));
+          found = addXf(c, keys[s]);
         }
         restyleCache.set(ck, found);
         return found;
+      }
+
+      // 折り返し・上揃えにした書式を探し、なければ複製して作る
+      var alignCache = new Map();
+      function realign(s, wrap, top) {
+        var xf = xfs[s];
+        if (!xf || (!wrap && !top)) return s;
+        var ck = s + (wrap ? "w" : "") + (top ? "t" : "");
+        if (alignCache.has(ck)) return alignCache.get(ck);
+        var c = xf.cloneNode(true);
+        var al = children(c, "alignment")[0];
+        if (!al) {
+          al = stylesDoc.createElementNS(NS_MAIN, c.prefix ? c.prefix + ":alignment" : "alignment");
+          c.insertBefore(al, c.firstChild);
+        }
+        if (wrap) al.setAttribute("wrapText", "1");
+        if (top) al.setAttribute("vertical", "top");
+        c.setAttribute("applyAlignment", "1");
+        var found = fulls.indexOf(ser.serializeToString(c));
+        if (found < 0) {
+          var k = c.cloneNode(true);
+          k.removeAttribute("fillId");
+          k.removeAttribute("applyFill");
+          found = addXf(c, ser.serializeToString(k));
+        }
+        alignCache.set(ck, found);
+        return found;
+      }
+
+      // 列幅：残った中身が元より短い列だけ、比率で縮める（広げることはしない）
+      var colsEl = firstNS(sheetDoc, "cols");
+      var colPx = {};
+      if (colsEl) {
+        children(colsEl, "col").forEach(function (colEl) {
+          var min = parseInt(colEl.getAttribute("min"), 10);
+          var max = parseInt(colEl.getAttribute("max"), 10);
+          var width = parseFloat(colEl.getAttribute("width"));
+          var letter = colName(min);
+          if (min === max && model.autoCols.indexOf(letter) >= 0 && width > 0) {
+            var before = 0;
+            var after = 0;
+            model.widthRows.forEach(function (row) {
+              var u = row.units[letter] || 0;
+              if (u > before) before = u;
+              if (rowMap.has(row.r) && u > after) after = u;
+            });
+            if (after && after < before) {
+              var pad = 1.5; // 文字幅に比例しない余白ぶん
+              width = pad + (width - pad) * after / before;
+              colEl.setAttribute("width", width.toFixed(6));
+            }
+          }
+          // 列幅の単位は既定フォント（Calibri 11）の数字1文字 = 7px
+          if (width > 0 && max - min < 64) for (var i = min; i <= max; i++) colPx[i] = Math.round(width * 7);
+        });
+      }
+      function spanPx(c1, c2) {
+        var px = 0;
+        for (var i = c1; i <= c2; i++) px += colPx[i] || 64;
+        return px;
+      }
+
+      // 備考の行の折り返し：空いている「受講中講座名〜次講座」の列を結合して1つの広いセルにし、
+      // 折り返した行数から行の高さを決める（結合セルは Excel が高さを自動調整しないため）
+      var LINE_PT = 15; // メイリオUI 11pt の1行ぶん（実測 約14pt）に少し余裕を足した値
+      var PAD_PT = 3;
+      var noteC1 = colIndex(model.cols.course);
+      var noteC2 = model.cols.next.reduce(function (m, c) { return Math.max(m, colIndex(c)); }, noteC1);
+      var mainRows = new Set(model.blocks.map(function (b) { return b.firstRow; }));
+      var mergesByRow = new Map();
+      model.mergeList.forEach(function (m) {
+        if (m.r1 !== m.r2) return;
+        if (!mergesByRow.has(m.r1)) mergesByRow.set(m.r1, []);
+        mergesByRow.get(m.r1).push({ c1: m.c1, c2: m.c2 });
+      });
+      var newMerges = [];
+      var trimSet = new Set();
+
+      function layoutRow(rowEl, oldR, newR, isBlockRow) {
+        var cellAt = {};
+        children(rowEl, "c").forEach(function (c) {
+          var ref = splitRef(c.getAttribute("r") || "");
+          if (ref) cellAt[colIndex(ref.col)] = c;
+        });
+        var textAt = function (i) { return cellAt[i] ? cellText(cellAt[i], model.strings) : ""; };
+        var spans = (mergesByRow.get(oldR) || []).slice();
+        var noteRow = isBlockRow ? !mainRows.has(oldR) : oldR > model.headerR;
+        if (noteRow && noteC2 > noteC1) {
+          var free = true;
+          for (var i = noteC1 + 1; i <= noteC2; i++) if (textAt(i) !== "") free = false;
+          var overlap = spans.some(function (sp) { return sp.c2 >= noteC1 && sp.c1 <= noteC2; });
+          if (free && !overlap) {
+            spans.push({ c1: noteC1, c2: noteC2 });
+            newMerges.push(colName(noteC1) + newR + ":" + colName(noteC2) + newR);
+          }
+        }
+        if (!isBlockRow) return;
+
+        var wrapPx = {};
+        var covered = {};
+        spans.forEach(function (sp) {
+          wrapPx[sp.c1] = spanPx(sp.c1, sp.c2);
+          for (var i = sp.c1 + 1; i <= sp.c2; i++) covered[i] = true;
+        });
+        for (var j = noteC1; j <= noteC2; j++) if (!covered[j] && !(j in wrapPx)) wrapPx[j] = spanPx(j, j);
+
+        var lines = 1;
+        Object.keys(wrapPx).forEach(function (k) {
+          var c = cellAt[k];
+          var text = textAt(k);
+          if (!c || !text) return;
+          var tidy = tidyNote(text);
+          var v = children(c, "v")[0];
+          if (tidy !== text && c.getAttribute("t") === "s" && v) trimSet.add(parseInt(v.textContent, 10));
+          lines = Math.max(lines, wrapLines(tidy, wrapPx[k]));
+        });
+        var top = lines > 1;
+        if (top) {
+          rowEl.setAttribute("ht", String(lines * LINE_PT + PAD_PT));
+          rowEl.setAttribute("customHeight", "1");
+        }
+        Object.keys(cellAt).forEach(function (k) {
+          var wrap = k in wrapPx && textAt(k) !== "";
+          if (!wrap && !top) return;
+          var c = cellAt[k];
+          var s = parseInt(c.getAttribute("s") || "0", 10);
+          var ns = realign(s, wrap, top);
+          if (ns !== s) c.setAttribute("s", String(ns));
+        });
       }
 
       // 行の削除・番号の振り直し・塗り分けの振り直し
@@ -837,6 +1026,9 @@ button, select, input { font: inherit; color: inherit; }
             var ns = restyle(s, model.bandFills[band]);
             if (ns !== s) c.setAttribute("s", String(ns));
           }
+        });
+        if (stylesDoc) layoutRow(rowEl, oldR, newR, band != null);
+        children(rowEl, "c").forEach(function (c) {
           if (sstDoc && c.getAttribute("t") === "s") {
             var v = children(c, "v")[0];
             if (v) {
@@ -862,6 +1054,17 @@ button, select, input { font: inherit; color: inherit; }
           }
           m.setAttribute("ref", a.col + rowMap.get(a.row) + ":" + b.col + rowMap.get(b.row));
         });
+      } else if (newMerges.length) {
+        var sheetRoot = sheetDoc.documentElement;
+        mergeCells = sheetDoc.createElementNS(NS_MAIN, sheetRoot.prefix ? sheetRoot.prefix + ":mergeCells" : "mergeCells");
+        sheetData.parentNode.insertBefore(mergeCells, sheetData.nextSibling);
+      }
+      if (mergeCells) {
+        newMerges.forEach(function (ref) {
+          var mc = sheetDoc.createElementNS(NS_MAIN, mergeCells.prefix ? mergeCells.prefix + ":mergeCell" : "mergeCell");
+          mc.setAttribute("ref", ref);
+          mergeCells.appendChild(mc);
+        });
         var left = children(mergeCells, "mergeCell").length;
         if (left) mergeCells.setAttribute("count", String(left));
         else mergeCells.parentNode.removeChild(mergeCells);
@@ -876,28 +1079,6 @@ button, select, input { font: inherit; color: inherit; }
         dim.setAttribute("ref", d1.col + d1.row + ":" + d2.col + lastRow);
       }
 
-      // 列幅：残った中身が元より短い列だけ、比率で縮める（広げることはしない）
-      var colsEl = firstNS(sheetDoc, "cols");
-      if (colsEl) {
-        children(colsEl, "col").forEach(function (colEl) {
-          var min = parseInt(colEl.getAttribute("min"), 10);
-          if (min !== parseInt(colEl.getAttribute("max"), 10)) return;
-          var letter = colName(min);
-          var width = parseFloat(colEl.getAttribute("width"));
-          if (model.autoCols.indexOf(letter) < 0 || !(width > 0)) return;
-          var before = 0;
-          var after = 0;
-          model.widthRows.forEach(function (row) {
-            var u = row.units[letter] || 0;
-            if (u > before) before = u;
-            if (rowMap.has(row.r) && u > after) after = u;
-          });
-          if (!after || after >= before) return;
-          var pad = 1.5; // 文字幅に比例しない余白ぶん
-          colEl.setAttribute("width", (pad + (width - pad) * after / before).toFixed(6));
-        });
-      }
-
       // 改ページ位置は行がずれるので外す
       var breaks = firstNS(sheetDoc, "rowBreaks");
       if (breaks) breaks.parentNode.removeChild(breaks);
@@ -908,7 +1089,13 @@ button, select, input { font: inherit; color: inherit; }
         var sis = children(sstRoot, "si");
         sis.forEach(function (si) { sstRoot.removeChild(si); });
         usedStrings.forEach(function (_, old) {
-          sstRoot.appendChild(sis[old] || sstDoc.createElementNS(NS_MAIN, sstRoot.prefix ? sstRoot.prefix + ":si" : "si"));
+          var si = sis[old] || sstDoc.createElementNS(NS_MAIN, sstRoot.prefix ? sstRoot.prefix + ":si" : "si");
+          // 備考の先頭・末尾の空行は印刷で無駄な行になるので詰める
+          var ts = children(si, "t");
+          if (trimSet.has(old) && ts.length === 1 && !children(si, "r").length) {
+            ts[0].textContent = tidyNote(ts[0].textContent);
+          }
+          sstRoot.appendChild(si);
         });
         sstRoot.setAttribute("count", String(stringRefs));
         sstRoot.setAttribute("uniqueCount", String(usedStrings.size));
