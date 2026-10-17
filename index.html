@@ -254,11 +254,51 @@ button, select, input { font: inherit; color: inherit; }
 .slot .count { grid-row: span 2; text-align: right; font-size: 13px; color: var(--muted); }
 .slot .count b { display: block; font-size: 26px; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
 .slot .fname { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
-.slot .save {
-  margin: 12px 16px;
-  width: calc(100% - 32px);
-  background: var(--c);
-  color: var(--on-solid);
+.btn.ghost {
+  background: transparent;
+  color: var(--c, var(--ink));
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+.acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.slot .acts { margin: 12px 16px; display: grid; grid-template-columns: 1fr 1fr; }
+.slot .acts .btn:not(.ghost) { background: var(--c); color: var(--on-solid); }
+
+/* 印刷用の表（画面には出さない） */
+.print-root { display: none; }
+.x-sheet {
+  font-family: "Meiryo UI", Meiryo, "BIZ UDPGothic", "Hiragino Sans", sans-serif;
+  font-size: 8.5pt;
+  color: #000;
+  background: #fff;
+}
+.x-sheet, .x-sheet * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.x-sheet + .x-sheet { break-before: page; }
+.xl { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.xl th, .xl td {
+  padding: 1.5px 3px;
+  vertical-align: top;
+  text-align: left;
+  font-weight: 400;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  border-left: 1px dotted #000;
+  border-bottom: 1px dotted #000;
+}
+.xl .c1 { border-left: 0; }
+.xl .b { font-weight: 700; }
+.xl .al-r { text-align: right; }
+.xl .al-c { text-align: center; }
+.xl .h-title th { border: 0; padding: 0 0 6px; font-weight: 700; }
+.xl .x-cap { float: right; margin-left: 16px; font-weight: 700; }
+.xl .h-row th { border-bottom: 0; }
+.xl .h-last th { border-bottom: 2px solid #000; }
+.xl tr, .xl tbody.blk { break-inside: avoid; }
+@media print {
+  @page { size: A4 landscape; margin: 10mm 8mm; }
+  :root, body { background: #fff !important; padding: 0 !important; }
+  body > :not(.print-root) { display: none !important; }
+  .print-root { display: block !important; }
 }
 .empty { margin: 0; padding: 4px 16px 18px; color: var(--muted); font-size: 14px; }
 
@@ -317,7 +357,7 @@ button, select, input { font: inherit; color: inherit; }
 <main class="page">
   <header class="head">
     <h1><span class="glyphs" aria-hidden="true"><span>朝</span><span>昼</span><span>晩</span></span>予約一覧 時間帯分け</h1>
-    <p>システムから出力した受講生予約一覧（.xlsx）を、朝・昼・晩の3つのファイルに分けます。書式は元のファイルのまま、A4で印刷したときに長い備考が見切れないよう折り返して書き出します。</p>
+    <p>システムから出力した受講生予約一覧（.xlsx）を、朝・昼・晩に分けます。ここから直接A4で印刷することも、Excelファイルとして保存することもできます。長い備考は見切れないよう列の幅で折り返します。</p>
   </header>
 
   <section class="panel" aria-label="ファイルと設定">
@@ -354,10 +394,13 @@ button, select, input { font: inherit; color: inherit; }
   <section aria-labelledby="outTitle" style="display:grid;gap:14px">
     <div class="bar">
       <div>
-        <h2 id="outTitle">書き出し</h2>
-        <p>受講生の並び順は元のファイルのまま。灰色・白の色分けは各ファイルの先頭から振り直し、長い備考は列の幅のまま折り返します。</p>
+        <h2 id="outTitle">印刷・保存</h2>
+        <p>並び順は元のファイルのまま、灰色・白の色分けは時間帯ごとに先頭から振り直します。まとめて印刷すると、時間帯ごとに改ページします。</p>
       </div>
-      <button type="button" class="btn" id="saveAll" disabled>3つとも保存</button>
+      <div class="acts">
+        <button type="button" class="btn" id="printAll" disabled>まとめて印刷</button>
+        <button type="button" class="btn ghost" id="saveAll" disabled>3つともExcelで保存</button>
+      </div>
     </div>
     <div class="slots" id="slots"></div>
   </section>
@@ -365,6 +408,7 @@ button, select, input { font: inherit; color: inherit; }
   <p class="foot">ファイルはこのブラウザの中だけで処理します。受講生の情報がどこかへ送られることはありません。</p>
 </main>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<div class="print-root" id="print"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
@@ -558,6 +602,16 @@ button, select, input { font: inherit; color: inherit; }
       return s;
     }
 
+    // 印刷用の日付表示（日本語版 Excel の表示に合わせて 2026/10/13 12:00 の形）
+    function dateJa(raw, numFmtId) {
+      var n = parseFloat(raw);
+      if (isNaN(n) || (numFmtId !== 14 && numFmtId !== 22)) return raw;
+      var d = new Date(Math.round((n - 25569) * 86400000));
+      var s = d.getUTCFullYear() + "/" + (d.getUTCMonth() + 1) + "/" + d.getUTCDate();
+      if (numFmtId === 22) s += " " + d.getUTCHours() + ":" + ("0" + d.getUTCMinutes()).slice(-2);
+      return s;
+    }
+
     function parseTime(text) {
       var s = String(text || "").trim().replace(/[０-９：]/g, function (ch) {
         return ch === "：" ? ":" : String.fromCharCode(ch.charCodeAt(0) - 0xfee0);
@@ -627,19 +681,53 @@ button, select, input { font: inherit; color: inherit; }
       var fills = [];
       var applyFills = [];
       var numFmts = [];
+      var xfBold = [];
+      var xfAlign = [];
+      var fillColors = [];
       if (stylesXml) {
         var stDoc = parseXml(stylesXml);
+        var fontBold = [];
+        var fontsEl = firstNS(stDoc, "fonts");
+        if (fontsEl) {
+          children(fontsEl, "font").forEach(function (f) {
+            var b = children(f, "b")[0];
+            fontBold.push(!!b && !/^(0|false)$/.test(b.getAttribute("val") || ""));
+          });
+        }
+        var fillsEl = firstNS(stDoc, "fills");
+        if (fillsEl) {
+          children(fillsEl, "fill").forEach(function (f) {
+            var p = children(f, "patternFill")[0];
+            var fg = p && p.getAttribute("patternType") === "solid" ? children(p, "fgColor")[0] : null;
+            var rgb = fg && fg.getAttribute("rgb");
+            fillColors.push(rgb ? "#" + rgb.slice(-6) : null);
+          });
+        }
         var cellXfs = firstNS(stDoc, "cellXfs");
         if (cellXfs) {
           children(cellXfs, "xf").forEach(function (xf) {
             fills.push(xf.getAttribute("fillId") || "0");
             applyFills.push(xf.getAttribute("applyFill"));
             numFmts.push(parseInt(xf.getAttribute("numFmtId") || "0", 10));
+            xfBold.push(!!fontBold[parseInt(xf.getAttribute("fontId") || "0", 10)]);
+            var al = children(xf, "alignment")[0];
+            xfAlign.push((al && al.getAttribute("horizontal")) || "general");
           });
         }
       }
 
       var sheetDoc = parseXml(sheetXml);
+
+      var colWidths = {};
+      var colsEl = firstNS(sheetDoc, "cols");
+      if (colsEl) {
+        children(colsEl, "col").forEach(function (colEl) {
+          var min = parseInt(colEl.getAttribute("min"), 10);
+          var max = parseInt(colEl.getAttribute("max"), 10);
+          var width = parseFloat(colEl.getAttribute("width"));
+          if (width > 0 && max - min < 64) for (var i = min; i <= max; i++) colWidths[i] = width;
+        });
+      }
 
       // 結合セルは列幅の見積もりから外す
       var merged = {};
@@ -662,18 +750,28 @@ button, select, input { font: inherit; color: inherit; }
         var cells = {};
         var styles = {};
         var units = {};
+        var disp = {};
         children(rowEl, "c").forEach(function (c) {
           var ref = splitRef(c.getAttribute("r") || "");
           if (!ref) return;
           var s = parseInt(c.getAttribute("s") || "0", 10);
           var t = c.getAttribute("t");
-          cells[ref.col] = cellText(c, strings);
+          var isNum = !t || t === "n";
+          var text = cellText(c, strings);
+          cells[ref.col] = text;
           styles[ref.col] = s;
-          if (!merged[ref.col + r] && cells[ref.col] !== "") {
-            units[ref.col] = textUnits(!t || t === "n" ? displayText(cells[ref.col], numFmts[s]) : cells[ref.col]);
+          if (!merged[ref.col + r] && text !== "") {
+            units[ref.col] = textUnits(isNum ? displayText(text, numFmts[s]) : text);
           }
+          // 印刷用：表示する文字列・太字・横位置
+          var h = xfAlign[s] || "general";
+          disp[colIndex(ref.col)] = {
+            t: isNum ? dateJa(text, numFmts[s]) : text,
+            b: !!xfBold[s],
+            al: /^center/.test(h) ? "c" : h === "right" ? "r" : h === "left" ? "l" : isNum && text !== "" ? "r" : "l",
+          };
         });
-        return { r: r, cells: cells, styles: styles, units: units };
+        return { r: r, cells: cells, styles: styles, units: units, disp: disp };
       });
 
       // 見出し行（「ID」「開始時間」がある行）を探す
@@ -701,6 +799,7 @@ button, select, input { font: inherit; color: inherit; }
         area: cols["エリア"] || "F",
         course: cols["受講中講座名"] || "G",
         next: [cols["次講座①"], cols["次講座②"], cols["次講座③"]].filter(Boolean),
+        memo: cols["当日の詳細メモ"],
       };
 
       var titleRow = rows[0] && rows[0].r < rows[headerIdx].r ? rows[0] : null;
@@ -788,10 +887,20 @@ button, select, input { font: inherit; color: inherit; }
         });
       }
 
+      var disp = new Map();
+      rows.forEach(function (row) { disp.set(row.r, row.disp); });
+      var lastCol = Object.keys(rows[headerIdx].cells).reduce(function (m, col) {
+        return Math.max(m, colIndex(col));
+      }, 1);
+
       return {
         buffer: buffer,
         paths: paths,
         strings: strings,
+        disp: disp,
+        colWidths: colWidths,
+        lastCol: lastCol,
+        fillColors: fillColors,
         cols: C,
         headerR: headerR,
         mergeList: mergeList,
@@ -809,6 +918,137 @@ button, select, input { font: inherit; color: inherit; }
         bandFills: bandFills,
         bandApplyFill: bandApplyFill,
       };
+    }
+
+    // 列幅：残った中身が元より短い列だけ、比率で縮める（広げることはしない）
+    function outputWidths(model, kept) {
+      var out = {};
+      Object.keys(model.colWidths).forEach(function (k) {
+        var i = parseInt(k, 10);
+        var width = model.colWidths[i];
+        var letter = colName(i);
+        if (model.autoCols.indexOf(letter) >= 0) {
+          var before = 0;
+          var after = 0;
+          model.widthRows.forEach(function (row) {
+            var u = row.units[letter] || 0;
+            if (u > before) before = u;
+            if (kept(row.r) && u > after) after = u;
+          });
+          var pad = 1.5; // 文字幅に比例しない余白ぶん
+          if (after && after < before) width = pad + (width - pad) * after / before;
+        }
+        out[i] = width;
+      });
+      return out;
+    }
+
+    function textEm(text, bold) {
+      var max = 0;
+      String(text).split(/\r?\n/).forEach(function (line) {
+        var w = 0;
+        for (var i = 0; i < line.length; i++) w += charEm(line.charCodeAt(i));
+        if (w > max) max = w;
+      });
+      return bold ? max * 1.1 : max;
+    }
+
+    // 印刷用のデータ：Excel と同じ結合・塗り分けで、表として組めるようにまとめる。
+    // 列幅は、備考の列以外を中身が1行に収まる幅にし、残りを備考の列に回す（備考だけ折り返す）
+    function printData(model, selected) {
+      var n = model.lastCol;
+      var spansOf = {};
+      model.mergeList.forEach(function (m) {
+        if (m.r1 !== m.r2) return;
+        (spansOf[m.r1] = spansOf[m.r1] || []).push(m);
+      });
+      function rowCells(r) {
+        var d = model.disp.get(r) || {};
+        var spans = spansOf[r] || [];
+        var out = [];
+        for (var i = 1; i <= n; i++) {
+          var inner = spans.some(function (sp) { return i > sp.c1 && i <= sp.c2; });
+          if (inner) continue;
+          var sp = spans.filter(function (s) { return s.c1 === i; })[0];
+          var c = d[i] || { t: "", b: false, al: "l" };
+          out.push({ col: i, t: tidyNote(c.t), b: c.b, al: c.al, span: sp ? Math.min(sp.c2, n) - sp.c1 + 1 : 1 });
+        }
+        return out;
+      }
+      var head = model.headerRows.filter(function (r) { return r >= model.headerR; }).map(rowCells);
+      var blocks = selected.map(function (bi, j) {
+        var b = model.blocks[bi];
+        var fill = model.bandFills.length ? model.fillColors[parseInt(model.bandFills[j % 2], 10)] : null;
+        return {
+          fill: fill || null,
+          rows: b.rows.map(function (r) { return { main: r === b.firstRow, cells: rowCells(r) }; }),
+        };
+      });
+
+      var noteCol = colIndex(model.cols.course);
+      var memoCol = model.cols.memo ? colIndex(model.cols.memo) : 0;
+      var need = {};
+      var headNeed = {};
+      var spanNeed = [];
+      var allRows = head.slice();
+      blocks.forEach(function (b) {
+        b.rows.forEach(function (row) { allRows.push(row.cells); });
+      });
+      allRows.forEach(function (cells, k) {
+        cells.forEach(function (c) {
+          var em = textEm(c.t, c.b);
+          if (c.span > 1) spanNeed.push({ c1: c.col, c2: c.col + c.span - 1, em: em });
+          else if (em > (need[c.col] || 0)) need[c.col] = em;
+          if (k < head.length && c.span === 1 && em > (headNeed[c.col] || 0)) headNeed[c.col] = em;
+        });
+      });
+      var widen = function (em) { return em * 1.12 + 0.8; }; // 余白とフォント差のぶん少し広め
+      // 幅の単位は印刷の文字サイズ（1em）。A4横の印字幅はおよそ 92em
+      var PAGE_EM = 92;
+      var MEMO_PCT = 8; // 「当日の詳細メモ」は手書き用に一定の幅を残す
+      var NOTE_MIN_EM = 24; // 備考の列は最低でも24文字ぶん
+      var keepOneLine = [model.cols.id, model.cols.name, model.cols.start, model.cols.end].map(colIndex);
+      var w = {};
+      for (var i = 1; i <= n; i++) {
+        if (i === noteCol || i === memoCol) continue;
+        w[i] = Math.max(need[i] || 0, 1.5);
+      }
+      spanNeed.forEach(function (sp) {
+        var sum = 0;
+        var last = 0;
+        for (var i = sp.c1; i <= sp.c2; i++) if (w[i] != null) { sum += w[i]; last = i; }
+        if (last && sum < sp.em) w[last] += sp.em - sum;
+      });
+      Object.keys(w).forEach(function (i) { w[i] = widen(w[i]); });
+
+      // 備考の列が狭くなりすぎるときは、確認事項・エリア・次講座の列を縮めて折り返させる。
+      // 見出しの幅までは残し、それより広い部分を同じ割合で削る
+      var fixedSum = 0;
+      var floorSum = 0;
+      var extraSum = 0;
+      var floor = {};
+      Object.keys(w).forEach(function (i) {
+        if (keepOneLine.indexOf(+i) >= 0) {
+          fixedSum += w[i];
+          return;
+        }
+        floor[i] = Math.min(w[i], widen(Math.max(headNeed[i] || 0, 2)));
+        floorSum += floor[i];
+        extraSum += w[i] - floor[i];
+      });
+      var room = PAGE_EM * (1 - MEMO_PCT / 100) - NOTE_MIN_EM - fixedSum;
+      if (floorSum + extraSum > room) {
+        var keep = extraSum > 0 ? Math.min(Math.max((room - floorSum) / extraSum, 0), 1) : 0;
+        Object.keys(floor).forEach(function (i) { w[i] = floor[i] + (w[i] - floor[i]) * keep; });
+      }
+
+      var cols = [];
+      for (var c = 1; c <= n; c++) {
+        if (c === noteCol) cols.push(null); // 残りの幅をすべて使う
+        else if (c === memoCol) cols.push(MEMO_PCT + "%");
+        else cols.push(w[c].toFixed(2) + "em");
+      }
+      return { title: model.title, cols: cols, head: head, blocks: blocks };
     }
 
     async function build(model, selected) {
@@ -903,33 +1143,19 @@ button, select, input { font: inherit; color: inherit; }
         return found;
       }
 
-      // 列幅：残った中身が元より短い列だけ、比率で縮める（広げることはしない）
+      // 列幅
+      var widths = outputWidths(model, function (r) { return rowMap.has(r); });
       var colsEl = firstNS(sheetDoc, "cols");
-      var colPx = {};
       if (colsEl) {
         children(colsEl, "col").forEach(function (colEl) {
           var min = parseInt(colEl.getAttribute("min"), 10);
-          var max = parseInt(colEl.getAttribute("max"), 10);
-          var width = parseFloat(colEl.getAttribute("width"));
-          var letter = colName(min);
-          if (min === max && model.autoCols.indexOf(letter) >= 0 && width > 0) {
-            var before = 0;
-            var after = 0;
-            model.widthRows.forEach(function (row) {
-              var u = row.units[letter] || 0;
-              if (u > before) before = u;
-              if (rowMap.has(row.r) && u > after) after = u;
-            });
-            if (after && after < before) {
-              var pad = 1.5; // 文字幅に比例しない余白ぶん
-              width = pad + (width - pad) * after / before;
-              colEl.setAttribute("width", width.toFixed(6));
-            }
-          }
-          // 列幅の単位は既定フォント（Calibri 11）の数字1文字 = 7px
-          if (width > 0 && max - min < 64) for (var i = min; i <= max; i++) colPx[i] = Math.round(width * 7);
+          if (min !== parseInt(colEl.getAttribute("max"), 10) || !widths[min]) return;
+          if (widths[min] !== model.colWidths[min]) colEl.setAttribute("width", widths[min].toFixed(6));
         });
       }
+      // 列幅の単位は既定フォント（Calibri 11）の数字1文字 = 7px
+      var colPx = {};
+      Object.keys(widths).forEach(function (i) { colPx[i] = Math.round(widths[i] * 7); });
       function spanPx(c1, c2) {
         var px = 0;
         for (var i = c1; i <= c2; i++) px += colPx[i] || 64;
@@ -1098,7 +1324,7 @@ button, select, input { font: inherit; color: inherit; }
       });
     }
 
-    return { load: load, build: build, parseTime: parseTime };
+    return { load: load, build: build, printData: printData, parseTime: parseTime };
   }
 
   var SLOT_DEFS = [
@@ -1141,6 +1367,61 @@ button, select, input { font: inherit; color: inherit; }
     return { lists: lists, crossing: crossing, unknown: unknown };
   }
 
+  // 印刷用の表を組む（printData の結果から）。見た目は Excel の出力に合わせる
+  function renderPrintSheet(doc, data, caption) {
+    function el(tag, cls, text) {
+      var e = doc.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    }
+    function rowEl(tag, cells, cls, fill) {
+      var tr = el("tr", cls);
+      cells.forEach(function (c) {
+        var cell = el(tag, "c" + c.col + (c.b ? " b" : "") + " al-" + c.al, c.t);
+        if (c.span > 1) cell.colSpan = c.span;
+        if (fill) cell.style.backgroundColor = fill;
+        tr.appendChild(cell);
+      });
+      return tr;
+    }
+    var table = el("table", "xl");
+    var colgroup = el("colgroup");
+    data.cols.forEach(function (w) {
+      var col = el("col");
+      if (w) col.style.width = w;
+      colgroup.appendChild(col);
+    });
+    table.appendChild(colgroup);
+
+    // 見出しは各ページに繰り返される
+    var thead = el("thead");
+    var titleRow = el("tr", "h-title");
+    var titleCell = el("th");
+    titleCell.colSpan = data.cols.length;
+    if (caption) titleCell.appendChild(el("span", "x-cap", caption));
+    titleCell.appendChild(el("span", "x-title", data.title));
+    titleRow.appendChild(titleCell);
+    thead.appendChild(titleRow);
+    data.head.forEach(function (cells, i) {
+      thead.appendChild(rowEl("th", cells, i === data.head.length - 1 ? "h-last" : "h-row"));
+    });
+    table.appendChild(thead);
+
+    // 受講生1人ぶん（本行＋備考の行）を1つの tbody にして、ページをまたがないようにする
+    data.blocks.forEach(function (b) {
+      var tbody = el("tbody", "blk");
+      b.rows.forEach(function (row) {
+        tbody.appendChild(rowEl("td", row.cells, row.main ? "main" : "sub", b.fill));
+      });
+      table.appendChild(tbody);
+    });
+
+    var section = el("section", "x-sheet");
+    section.appendChild(table);
+    return section;
+  }
+
   function outputName(inputName, label) {
     var base = String(inputName || "受講生予約一覧.xlsx").replace(/\.xlsx$/i, "").replace(/\s*\(\d+\)$/, "");
     return base + "_" + label + ".xlsx";
@@ -1149,6 +1430,7 @@ button, select, input { font: inherit; color: inherit; }
   var api = {
     createSplitter: createSplitter,
     assignSlots: assignSlots,
+    renderPrintSheet: renderPrintSheet,
     outputName: outputName,
     SLOT_DEFS: SLOT_DEFS,
     XLSX_MIME: XLSX_MIME,
@@ -1376,21 +1658,58 @@ button, select, input { font: inherit; color: inherit; }
           h("span", { class: "count" }, h("b", { text: String(list.length) }), "名"),
           h("span", { class: "fname", text: fname })
         ),
-        h("button", {
-          type: "button",
-          class: "btn save",
-          disabled: !list.length || st.busy,
-          onclick: function () { saveSlots([k]); },
-          text: def.label + "のファイルを保存",
-        }),
+        h("div", { class: "acts" },
+          h("button", {
+            type: "button",
+            class: "btn",
+            disabled: !list.length || st.busy,
+            onclick: function () { printSlots([k]); },
+            text: def.label + "を印刷",
+          }),
+          h("button", {
+            type: "button",
+            class: "btn ghost",
+            disabled: !list.length || st.busy,
+            onclick: function () { saveSlots([k]); },
+            text: "Excelで保存",
+          })
+        ),
         list.length
           ? h("ol", { class: "list" }, list.map(function (i) { return studentItem(st.model.blocks[i], k, crossByIndex[i]); }))
           : h("p", { class: "empty", text: "この時間帯の予約はありません。" })
       );
       wrap.append(card);
     });
-    $("saveAll").disabled = st.busy || !st.result.lists.some(function (l) { return l.length; });
+    var none = !st.result.lists.some(function (l) { return l.length; });
+    $("saveAll").disabled = st.busy || none;
+    $("printAll").disabled = st.busy || none;
   }
+
+  // ---- 印刷（保存せずにそのまま印刷） ----
+  function fillPrint(ks) {
+    var root = $("print");
+    root.replaceChildren();
+    if (!st.model || !st.result) return 0;
+    ks.forEach(function (k) {
+      var list = st.result.lists[k];
+      if (!list.length) return;
+      var caption = S.SLOT_DEFS[k].label + "（" + rangeLabel(k) + "）" + list.length + "名";
+      root.append(S.renderPrintSheet(document, splitter.printData(st.model, list), caption));
+    });
+    return root.childElementCount;
+  }
+
+  function printSlots(ks) {
+    if (st.busy) return;
+    if (!fillPrint(ks)) return;
+    window.print();
+  }
+
+  // ボタンを使わずに Ctrl+P で印刷したときは、3つの時間帯をまとめて出す
+  window.addEventListener("beforeprint", function () {
+    if (!$("print").childElementCount) fillPrint([0, 1, 2]);
+  });
+  window.addEventListener("afterprint", function () { $("print").replaceChildren(); });
 
   function render() {
     if (st.model) st.result = S.assignSlots(st.model.blocks, st.ends, st.rule);
@@ -1483,6 +1802,7 @@ button, select, input { font: inherit; color: inherit; }
   }
 
   $("saveAll").addEventListener("click", function () { saveSlots([0, 1, 2]); });
+  $("printAll").addEventListener("click", function () { printSlots([0, 1, 2]); });
   setupSettings();
   setupDrop();
 
