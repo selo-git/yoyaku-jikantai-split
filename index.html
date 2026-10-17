@@ -206,6 +206,9 @@ button, select, input { font: inherit; color: inherit; }
 .seg input:checked + span { background: var(--ink); color: var(--surface); }
 .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
 .hint { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.checks label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
+.checks input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
 .cross { font-size: 13px; margin: 6px 0 0; display: grid; gap: 2px; }
 .cross b { font-weight: 700; }
 
@@ -295,7 +298,9 @@ button, select, input { font: inherit; color: inherit; }
 .xl .h-row th { border-bottom: 0; }
 .xl .h-last th { border-bottom: 2px solid #000; }
 .xl tr, .xl tbody.blk { break-inside: avoid; }
+.xl tr.pad th, .xl tr.pad td { height: 9mm; padding: 0; border: 0; }
 @media print {
+  .print-root { padding: 0 8mm; }
   :root, body { background: #fff !important; padding: 0 !important; }
   body > :not(.print-root) { display: none !important; }
   .print-root { display: block !important; }
@@ -395,6 +400,14 @@ button, select, input { font: inherit; color: inherit; }
           <label><input type="radio" name="orient" id="orientPortrait" value="portrait"><span>縦（文字 約6.2pt）</span></label>
         </div>
       </div>
+      <div>
+        <p class="label">印刷に入れる列</p>
+        <div class="checks">
+          <label><input type="checkbox" id="colNext3"><span>次講座③</span></label>
+          <label><input type="checkbox" id="colMemo"><span>当日の詳細メモ</span></label>
+        </div>
+        <p class="hint">チェックを外した列は印刷しません（そのぶん備考の欄が広くなります）。Excelで保存するファイルには全部の列が入ります。</p>
+      </div>
     </div>
   </section>
 
@@ -416,7 +429,7 @@ button, select, input { font: inherit; color: inherit; }
 </main>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <div class="print-root" id="print"></div>
-<style id="pageSize">@page { size: A4 landscape; margin: 10mm 8mm; }</style>
+<style id="pageSize">@page { size: A4 landscape; margin: 0; }</style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
@@ -911,6 +924,7 @@ button, select, input { font: inherit; color: inherit; }
         fillColors: fillColors,
         cols: C,
         headerR: headerR,
+        headerCols: cols,
         mergeList: mergeList,
         autoCols: autoCols,
         widthRows: widthRows,
@@ -964,8 +978,15 @@ button, select, input { font: inherit; color: inherit; }
     // 印刷用のデータ：Excel と同じ結合・塗り分けで、表として組めるようにまとめる。
     // 列幅は、備考の列以外を中身が1行に収まる幅にし、残りを備考の列に回す（備考だけ折り返す）
     // opts.pageEm: 用紙の印字幅（印刷の文字サイズ 1em 単位）。A4横・8.5pt でおよそ 92em
+    // opts.hide: 印刷しない列の見出し名（例：["次講座③", "当日の詳細メモ"]）
     function printData(model, selected, opts) {
       var n = model.lastCol;
+      var hidden = {};
+      ((opts && opts.hide) || []).forEach(function (name) {
+        if (model.headerCols[name]) hidden[colIndex(model.headerCols[name])] = true;
+      });
+      var visible = [];
+      for (var v = 1; v <= n; v++) if (!hidden[v]) visible.push(v);
       var spansOf = {};
       model.mergeList.forEach(function (m) {
         if (m.r1 !== m.r2) return;
@@ -975,13 +996,14 @@ button, select, input { font: inherit; color: inherit; }
         var d = model.disp.get(r) || {};
         var spans = spansOf[r] || [];
         var out = [];
-        for (var i = 1; i <= n; i++) {
+        visible.forEach(function (i) {
           var inner = spans.some(function (sp) { return i > sp.c1 && i <= sp.c2; });
-          if (inner) continue;
+          if (inner) return;
           var sp = spans.filter(function (s) { return s.c1 === i; })[0];
+          var span = sp ? visible.filter(function (x) { return x >= sp.c1 && x <= sp.c2; }).length : 1;
           var c = d[i] || { t: "", b: false, al: "l" };
-          out.push({ col: i, t: tidyNote(c.t), b: c.b, al: c.al, span: sp ? Math.min(sp.c2, n) - sp.c1 + 1 : 1 });
-        }
+          out.push({ col: i, t: tidyNote(c.t), b: c.b, al: c.al, span: span });
+        });
         return out;
       }
       var head = model.headerRows.filter(function (r) { return r >= model.headerR; }).map(rowCells);
@@ -1013,14 +1035,15 @@ button, select, input { font: inherit; color: inherit; }
       });
       var widen = function (em) { return em * 1.12 + 0.8; }; // 余白とフォント差のぶん少し広め
       var PAGE_EM = (opts && opts.pageEm) || 92;
-      var MEMO_PCT = 8; // 「当日の詳細メモ」は手書き用に一定の幅を残す
+      if (hidden[memoCol]) memoCol = 0;
+      var MEMO_PCT = memoCol ? 8 : 0; // 「当日の詳細メモ」は手書き用に一定の幅を残す
       var NOTE_MIN_EM = 24; // 備考の列は最低でも24文字ぶん
       var keepOneLine = [model.cols.id, model.cols.name, model.cols.start, model.cols.end].map(colIndex);
       var w = {};
-      for (var i = 1; i <= n; i++) {
-        if (i === noteCol || i === memoCol) continue;
+      visible.forEach(function (i) {
+        if (i === noteCol || i === memoCol) return;
         w[i] = Math.max(need[i] || 0, 1.5);
-      }
+      });
       spanNeed.forEach(function (sp) {
         var sum = 0;
         var last = 0;
@@ -1050,12 +1073,11 @@ button, select, input { font: inherit; color: inherit; }
         Object.keys(floor).forEach(function (i) { w[i] = floor[i] + (w[i] - floor[i]) * keep; });
       }
 
-      var cols = [];
-      for (var c = 1; c <= n; c++) {
-        if (c === noteCol) cols.push(null); // 残りの幅をすべて使う
-        else if (c === memoCol) cols.push(MEMO_PCT + "%");
-        else cols.push(w[c].toFixed(2) + "em");
-      }
+      var cols = visible.map(function (c) {
+        if (c === noteCol) return null; // 残りの幅をすべて使う
+        if (c === memoCol) return MEMO_PCT + "%";
+        return w[c].toFixed(2) + "em";
+      });
       return { title: model.title, cols: cols, head: head, blocks: blocks };
     }
 
@@ -1402,8 +1424,19 @@ button, select, input { font: inherit; color: inherit; }
     });
     table.appendChild(colgroup);
 
+    // 用紙の余白は0にして（ブラウザがURLや日付を余白に印刷しないように）、
+    // 上下の余白は各ページにくり返される空き行で作る
+    function padRow(tag) {
+      var tr = el("tr", "pad");
+      var cell = el(tag);
+      cell.colSpan = data.cols.length;
+      tr.appendChild(cell);
+      return tr;
+    }
+
     // 見出しは各ページに繰り返される
     var thead = el("thead");
+    thead.appendChild(padRow("th"));
     var titleRow = el("tr", "h-title");
     var titleCell = el("th");
     titleCell.colSpan = data.cols.length;
@@ -1424,6 +1457,9 @@ button, select, input { font: inherit; color: inherit; }
       });
       table.appendChild(tbody);
     });
+    var tfoot = el("tfoot");
+    tfoot.appendChild(padRow("td"));
+    table.appendChild(tfoot);
 
     var section = el("section", "x-sheet");
     section.appendChild(table);
@@ -1457,7 +1493,11 @@ button, select, input { font: inherit; color: inherit; }
   var SLOT_CLASS = ["asa", "hiru", "ban"];
   var STORE_KEY = "yoyaku-split-settings";
 
-  var st = { model: null, fileName: "", sample: false, ends: [780, 1020], rule: "overlap", orient: "landscape", result: null, busy: false };
+  var st = {
+    model: null, fileName: "", sample: false, result: null, busy: false,
+    ends: [780, 1020], rule: "overlap", orient: "landscape",
+    printCols: { next3: false, memo: false }, // 印刷に入れるかどうか（初期は入れない）
+  };
   // 印刷の向きごとの用紙の印字幅（文字サイズ 1em 単位）。A4 から余白 8mm×2 を引いた幅を少し狭めに見積もる
   var PAGE = {
     landscape: { pageEm: 92 }, // 281mm ÷ 8.5pt
@@ -1471,10 +1511,15 @@ button, select, input { font: inherit; color: inherit; }
     if (saved && Array.isArray(saved.ends) && saved.ends[0] < saved.ends[1]) st.ends = saved.ends.slice(0, 2);
     if (saved && (saved.rule === "overlap" || saved.rule === "start")) st.rule = saved.rule;
     if (saved && PAGE[saved.orient]) st.orient = saved.orient;
+    if (saved && saved.printCols) {
+      st.printCols = { next3: saved.printCols.next3 === true, memo: saved.printCols.memo === true };
+    }
   } catch (e) { /* 保存できない環境では既定値のまま */ }
 
   function remember() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ ends: st.ends, rule: st.rule, orient: st.orient })); } catch (e) { /* noop */ }
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({ ends: st.ends, rule: st.rule, orient: st.orient, printCols: st.printCols }));
+    } catch (e) { /* noop */ }
   }
 
   function h(tag, props) {
@@ -1704,13 +1749,17 @@ button, select, input { font: inherit; color: inherit; }
     var root = $("print");
     root.replaceChildren();
     root.classList.toggle("portrait", st.orient === "portrait");
-    $("pageSize").textContent = "@page { size: A4 " + st.orient + "; margin: 10mm 8mm; }";
+    // 余白0：ブラウザがページの余白に URL・日付・ページ名を印刷しないようにする（余白は表の側で取る）
+    $("pageSize").textContent = "@page { size: A4 " + st.orient + "; margin: 0; }";
     if (!st.model || !st.result) return 0;
     ks.forEach(function (k) {
       var list = st.result.lists[k];
       if (!list.length) return;
       var caption = S.SLOT_DEFS[k].label + "（" + rangeLabel(k) + "）" + list.length + "名";
-      root.append(S.renderPrintSheet(document, splitter.printData(st.model, list, PAGE[st.orient]), caption));
+      var opts = { pageEm: PAGE[st.orient].pageEm, hide: [] };
+      if (!st.printCols.next3) opts.hide.push("次講座③");
+      if (!st.printCols.memo) opts.hide.push("当日の詳細メモ");
+      root.append(S.renderPrintSheet(document, splitter.printData(st.model, list, opts), caption));
     });
     return root.childElementCount;
   }
@@ -1771,6 +1820,14 @@ button, select, input { font: inherit; color: inherit; }
     fillSelect($("end1"), 12 * 60, 20 * 60, st.ends[1]);
     $("ruleOverlap").checked = st.rule === "overlap";
     $("ruleStart").checked = st.rule === "start";
+    $("colNext3").checked = st.printCols.next3;
+    $("colMemo").checked = st.printCols.memo;
+    [["colNext3", "next3"], ["colMemo", "memo"]].forEach(function (pair) {
+      $(pair[0]).addEventListener("change", function (e) {
+        st.printCols[pair[1]] = e.target.checked;
+        remember();
+      });
+    });
     $("orientLandscape").checked = st.orient === "landscape";
     $("orientPortrait").checked = st.orient === "portrait";
     document.querySelectorAll('input[name="orient"]').forEach(function (r) {
