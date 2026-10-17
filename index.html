@@ -271,6 +271,7 @@ button, select, input { font: inherit; color: inherit; }
   color: #000;
   background: #fff;
 }
+.print-root.portrait .x-sheet { font-size: 6.2pt; }
 .x-sheet, .x-sheet * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .x-sheet + .x-sheet { break-before: page; }
 .xl { width: 100%; border-collapse: collapse; table-layout: fixed; }
@@ -295,7 +296,6 @@ button, select, input { font: inherit; color: inherit; }
 .xl .h-last th { border-bottom: 2px solid #000; }
 .xl tr, .xl tbody.blk { break-inside: avoid; }
 @media print {
-  @page { size: A4 landscape; margin: 10mm 8mm; }
   :root, body { background: #fff !important; padding: 0 !important; }
   body > :not(.print-root) { display: none !important; }
   .print-root { display: block !important; }
@@ -388,6 +388,13 @@ button, select, input { font: inherit; color: inherit; }
         </div>
         <div class="cross" id="cross"></div>
       </div>
+      <div>
+        <p class="label">印刷の向き（A4）</p>
+        <div class="seg" role="radiogroup" aria-label="印刷の向き">
+          <label><input type="radio" name="orient" id="orientLandscape" value="landscape"><span>横（文字 8.5pt）</span></label>
+          <label><input type="radio" name="orient" id="orientPortrait" value="portrait"><span>縦（文字 約6.2pt）</span></label>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -409,6 +416,7 @@ button, select, input { font: inherit; color: inherit; }
 </main>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <div class="print-root" id="print"></div>
+<style id="pageSize">@page { size: A4 landscape; margin: 10mm 8mm; }</style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
@@ -955,7 +963,8 @@ button, select, input { font: inherit; color: inherit; }
 
     // 印刷用のデータ：Excel と同じ結合・塗り分けで、表として組めるようにまとめる。
     // 列幅は、備考の列以外を中身が1行に収まる幅にし、残りを備考の列に回す（備考だけ折り返す）
-    function printData(model, selected) {
+    // opts.pageEm: 用紙の印字幅（印刷の文字サイズ 1em 単位）。A4横・8.5pt でおよそ 92em
+    function printData(model, selected, opts) {
       var n = model.lastCol;
       var spansOf = {};
       model.mergeList.forEach(function (m) {
@@ -1003,8 +1012,7 @@ button, select, input { font: inherit; color: inherit; }
         });
       });
       var widen = function (em) { return em * 1.12 + 0.8; }; // 余白とフォント差のぶん少し広め
-      // 幅の単位は印刷の文字サイズ（1em）。A4横の印字幅はおよそ 92em
-      var PAGE_EM = 92;
+      var PAGE_EM = (opts && opts.pageEm) || 92;
       var MEMO_PCT = 8; // 「当日の詳細メモ」は手書き用に一定の幅を残す
       var NOTE_MIN_EM = 24; // 備考の列は最低でも24文字ぶん
       var keepOneLine = [model.cols.id, model.cols.name, model.cols.start, model.cols.end].map(colIndex);
@@ -1449,7 +1457,12 @@ button, select, input { font: inherit; color: inherit; }
   var SLOT_CLASS = ["asa", "hiru", "ban"];
   var STORE_KEY = "yoyaku-split-settings";
 
-  var st = { model: null, fileName: "", sample: false, ends: [780, 1020], rule: "overlap", result: null, busy: false };
+  var st = { model: null, fileName: "", sample: false, ends: [780, 1020], rule: "overlap", orient: "landscape", result: null, busy: false };
+  // 印刷の向きごとの用紙の印字幅（文字サイズ 1em 単位）。A4 から余白 8mm×2 を引いた幅を少し狭めに見積もる
+  var PAGE = {
+    landscape: { pageEm: 92 }, // 281mm ÷ 8.5pt
+    portrait: { pageEm: 87 }, // 194mm ÷ 6.2pt
+  };
   var splitter = null;
   var $ = function (id) { return document.getElementById(id); };
 
@@ -1457,10 +1470,11 @@ button, select, input { font: inherit; color: inherit; }
     var saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
     if (saved && Array.isArray(saved.ends) && saved.ends[0] < saved.ends[1]) st.ends = saved.ends.slice(0, 2);
     if (saved && (saved.rule === "overlap" || saved.rule === "start")) st.rule = saved.rule;
+    if (saved && PAGE[saved.orient]) st.orient = saved.orient;
   } catch (e) { /* 保存できない環境では既定値のまま */ }
 
   function remember() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ ends: st.ends, rule: st.rule })); } catch (e) { /* noop */ }
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ ends: st.ends, rule: st.rule, orient: st.orient })); } catch (e) { /* noop */ }
   }
 
   function h(tag, props) {
@@ -1689,12 +1703,14 @@ button, select, input { font: inherit; color: inherit; }
   function fillPrint(ks) {
     var root = $("print");
     root.replaceChildren();
+    root.classList.toggle("portrait", st.orient === "portrait");
+    $("pageSize").textContent = "@page { size: A4 " + st.orient + "; margin: 10mm 8mm; }";
     if (!st.model || !st.result) return 0;
     ks.forEach(function (k) {
       var list = st.result.lists[k];
       if (!list.length) return;
       var caption = S.SLOT_DEFS[k].label + "（" + rangeLabel(k) + "）" + list.length + "名";
-      root.append(S.renderPrintSheet(document, splitter.printData(st.model, list), caption));
+      root.append(S.renderPrintSheet(document, splitter.printData(st.model, list, PAGE[st.orient]), caption));
     });
     return root.childElementCount;
   }
@@ -1755,6 +1771,15 @@ button, select, input { font: inherit; color: inherit; }
     fillSelect($("end1"), 12 * 60, 20 * 60, st.ends[1]);
     $("ruleOverlap").checked = st.rule === "overlap";
     $("ruleStart").checked = st.rule === "start";
+    $("orientLandscape").checked = st.orient === "landscape";
+    $("orientPortrait").checked = st.orient === "portrait";
+    document.querySelectorAll('input[name="orient"]').forEach(function (r) {
+      r.addEventListener("change", function () {
+        if (!r.checked) return;
+        st.orient = r.value;
+        remember();
+      });
+    });
     function onBounds(changed) {
       var a = parseInt($("end0").value, 10);
       var b = parseInt($("end1").value, 10);
