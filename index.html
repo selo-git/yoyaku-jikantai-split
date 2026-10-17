@@ -355,7 +355,7 @@ button, select, input { font: inherit; color: inherit; }
     <div class="bar">
       <div>
         <h2 id="outTitle">書き出し</h2>
-        <p>受講生の並び順は元のファイルのまま。灰色・白の色分けは各ファイルの先頭から振り直し、備考は「受講中講座名」〜「次講座③」の幅に広げて折り返します。</p>
+        <p>受講生の並び順は元のファイルのまま。灰色・白の色分けは各ファイルの先頭から振り直し、長い備考は列の幅のまま折り返します。</p>
       </div>
       <button type="button" class="btn" id="saveAll" disabled>3つとも保存</button>
     </div>
@@ -936,41 +936,28 @@ button, select, input { font: inherit; color: inherit; }
         return px;
       }
 
-      // 備考の行の折り返し：空いている「受講中講座名〜次講座」の列を結合して1つの広いセルにし、
-      // 折り返した行数から行の高さを決める（結合セルは Excel が高さを自動調整しないため）
+      // 備考・講座名の折り返し：列の幅のまま折り返し、折り返した行数から行の高さを決める
+      // （開いたときの Excel の自動調整に頼らず、どの環境でも同じ高さで印刷されるようにする）
       var LINE_PT = 15; // メイリオUI 11pt の1行ぶん（実測 約14pt）に少し余裕を足した値
       var PAD_PT = 3;
       var noteC1 = colIndex(model.cols.course);
       var noteC2 = model.cols.next.reduce(function (m, c) { return Math.max(m, colIndex(c)); }, noteC1);
-      var mainRows = new Set(model.blocks.map(function (b) { return b.firstRow; }));
       var mergesByRow = new Map();
       model.mergeList.forEach(function (m) {
         if (m.r1 !== m.r2) return;
         if (!mergesByRow.has(m.r1)) mergesByRow.set(m.r1, []);
         mergesByRow.get(m.r1).push({ c1: m.c1, c2: m.c2 });
       });
-      var newMerges = [];
       var trimSet = new Set();
 
-      function layoutRow(rowEl, oldR, newR, isBlockRow) {
+      function layoutRow(rowEl, oldR) {
         var cellAt = {};
         children(rowEl, "c").forEach(function (c) {
           var ref = splitRef(c.getAttribute("r") || "");
           if (ref) cellAt[colIndex(ref.col)] = c;
         });
         var textAt = function (i) { return cellAt[i] ? cellText(cellAt[i], model.strings) : ""; };
-        var spans = (mergesByRow.get(oldR) || []).slice();
-        var noteRow = isBlockRow ? !mainRows.has(oldR) : oldR > model.headerR;
-        if (noteRow && noteC2 > noteC1) {
-          var free = true;
-          for (var i = noteC1 + 1; i <= noteC2; i++) if (textAt(i) !== "") free = false;
-          var overlap = spans.some(function (sp) { return sp.c2 >= noteC1 && sp.c1 <= noteC2; });
-          if (free && !overlap) {
-            spans.push({ c1: noteC1, c2: noteC2 });
-            newMerges.push(colName(noteC1) + newR + ":" + colName(noteC2) + newR);
-          }
-        }
-        if (!isBlockRow) return;
+        var spans = mergesByRow.get(oldR) || [];
 
         var wrapPx = {};
         var covered = {};
@@ -1027,7 +1014,7 @@ button, select, input { font: inherit; color: inherit; }
             if (ns !== s) c.setAttribute("s", String(ns));
           }
         });
-        if (stylesDoc) layoutRow(rowEl, oldR, newR, band != null);
+        if (stylesDoc && band != null) layoutRow(rowEl, oldR);
         children(rowEl, "c").forEach(function (c) {
           if (sstDoc && c.getAttribute("t") === "s") {
             var v = children(c, "v")[0];
@@ -1053,17 +1040,6 @@ button, select, input { font: inherit; color: inherit; }
             return;
           }
           m.setAttribute("ref", a.col + rowMap.get(a.row) + ":" + b.col + rowMap.get(b.row));
-        });
-      } else if (newMerges.length) {
-        var sheetRoot = sheetDoc.documentElement;
-        mergeCells = sheetDoc.createElementNS(NS_MAIN, sheetRoot.prefix ? sheetRoot.prefix + ":mergeCells" : "mergeCells");
-        sheetData.parentNode.insertBefore(mergeCells, sheetData.nextSibling);
-      }
-      if (mergeCells) {
-        newMerges.forEach(function (ref) {
-          var mc = sheetDoc.createElementNS(NS_MAIN, mergeCells.prefix ? mergeCells.prefix + ":mergeCell" : "mergeCell");
-          mc.setAttribute("ref", ref);
-          mergeCells.appendChild(mc);
         });
         var left = children(mergeCells, "mergeCell").length;
         if (left) mergeCells.setAttribute("count", String(left));
