@@ -166,14 +166,6 @@ button, select, input { font: inherit; color: inherit; }
 .meta div { display: flex; gap: 6px; }
 .meta dt { margin: 0; }
 .meta dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
-.sample-note {
-  font-size: 13px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: var(--caution-tint);
-  color: var(--caution);
-  justify-self: start;
-}
 .error {
   margin-top: 12px;
   font-size: 14px;
@@ -1686,8 +1678,7 @@ button, select, input { font: inherit; color: inherit; }
       h("div", { class: "name", text: st.fileName }),
       h("dl", { class: "meta" }, items.filter(function (it) { return it[1]; }).map(function (it) {
         return h("div", null, h("dt", { text: it[0] }), h("dd", { text: it[1] }));
-      })),
-      st.sample ? h("div", { class: "sample-note", text: "サンプル表示中：架空の受講生データです。自分のファイルを選ぶと置き換わります。" }) : null
+      }))
     );
     box.hidden = false;
   }
