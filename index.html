@@ -327,7 +327,7 @@ button, select, input { font: inherit; color: inherit; }
 .x-sheet.fit .xl tr.pad th, .x-sheet.fit .xl tr.pad td { padding: 0; }
 @media print {
   .print-root { padding: 0 8mm; }
-  :root, body { background: #fff !important; padding: 0 !important; }
+  :root, body { background: #fff !important; padding: 0 !important; margin: 0 !important; }
   body > :not(.print-root) { display: none !important; }
   .print-root { display: block !important; }
 }
@@ -1694,6 +1694,7 @@ button, select, input { font: inherit; color: inherit; }
       st.fileName = name;
       st.sample = !!isSample;
       render();
+      loadPrintFonts();
     } catch (e) {
       showError((name ? "「" + name + "」を読み込めませんでした。" : "") + (e && e.message ? e.message : ""));
     }
@@ -1917,7 +1918,33 @@ button, select, input { font: inherit; color: inherit; }
     return ok;
   }
 
+  // 印刷の表に出る字の Web フォント（BIZ UDPゴシックは字の範囲ごとに分かれている）を先に読み込んでおく。
+  // 読み込み前に測ると、印刷のときに字の幅や行の高さが変わってしまう
+  var fontsLoading = null;
+  function loadPrintFonts() {
+    if (!st.model || !document.fonts || !document.fonts.load) return Promise.resolve();
+    if (fontsLoading && fontsLoading.model === st.model) return fontsLoading.promise;
+    var seen = {};
+    var chars = "";
+    function add(text) {
+      for (var ch of String(text || "")) {
+        if (!seen[ch]) { seen[ch] = true; chars += ch; }
+      }
+    }
+    add(st.model.title);
+    add("（）〜名全員時間帯朝昼晩0123456789:");
+    st.model.disp.forEach(function (cols) {
+      Object.keys(cols).forEach(function (c) { add(cols[c].t); });
+    });
+    var promise = Promise.all(["400", "700"].map(function (w) {
+      return document.fonts.load(w + ' 16px "BIZ UDPGothic"', chars).catch(function () {});
+    }));
+    fontsLoading = { model: st.model, promise: promise };
+    return promise;
+  }
+
   function fillPrint(ks) {
+    measured = {};
     var root = $("print");
     root.replaceChildren();
     root.classList.toggle("portrait", st.orient === "portrait");
@@ -1953,8 +1980,9 @@ button, select, input { font: inherit; color: inherit; }
   function printSlots(ks) {
     if (st.busy) return;
     // フォントの読み込みを待ってから幅を測る
-    var ready = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
-    ready.then(function () {
+    loadPrintFonts().then(function () {
+      return document.fonts && document.fonts.ready;
+    }).then(function () {
       if (fillPrint(ks)) window.print();
     });
   }
