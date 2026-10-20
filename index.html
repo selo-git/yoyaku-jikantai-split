@@ -656,6 +656,15 @@ button, select, input { font: inherit; color: inherit; }
       return s;
     }
 
+    // 備考登録日時の表示（年と時刻は出さず 10/13 の形）。日付のセルでなければ null
+    var MMDD = "mm/dd";
+    function mmdd(raw, numFmtId) {
+      var n = parseFloat(raw);
+      if (isNaN(n) || (numFmtId !== 14 && numFmtId !== 22)) return null;
+      var d = new Date(Math.round((n - 25569) * 86400000));
+      return ("0" + (d.getUTCMonth() + 1)).slice(-2) + "/" + ("0" + d.getUTCDate()).slice(-2);
+    }
+
     // 印刷用の日付表示（日本語版 Excel の表示に合わせて 2026/10/13 12:00 の形）
     function dateJa(raw, numFmtId) {
       var n = parseFloat(raw);
@@ -805,6 +814,7 @@ button, select, input { font: inherit; color: inherit; }
         var styles = {};
         var units = {};
         var disp = {};
+        var nums = {};
         children(rowEl, "c").forEach(function (c) {
           var ref = splitRef(c.getAttribute("r") || "");
           if (!ref) return;
@@ -814,6 +824,7 @@ button, select, input { font: inherit; color: inherit; }
           var text = cellText(c, strings);
           cells[ref.col] = text;
           styles[ref.col] = s;
+          nums[ref.col] = isNum && text !== "";
           if (!merged[ref.col + r] && text !== "") {
             units[ref.col] = textUnits(isNum ? displayText(text, numFmts[s]) : text);
           }
@@ -825,7 +836,7 @@ button, select, input { font: inherit; color: inherit; }
             al: /^center/.test(h) ? "c" : h === "right" ? "r" : h === "left" ? "l" : isNum && text !== "" ? "r" : "l",
           };
         });
-        return { r: r, cells: cells, styles: styles, units: units, disp: disp };
+        return { r: r, cells: cells, styles: styles, units: units, disp: disp, nums: nums };
       });
 
       // 見出し行（「ID」「開始時間」がある行）を探す
@@ -855,6 +866,27 @@ button, select, input { font: inherit; color: inherit; }
         next: [cols["次講座①"], cols["次講座②"], cols["次講座③"]].filter(Boolean),
         memo: cols["当日の詳細メモ"],
       };
+      // 備考登録日時の列（見出しの2段目）。なければ終了時間と同じ列
+      C.noteDate = C.end;
+      var subHead = rows[headerIdx + 1];
+      if (subHead) {
+        Object.keys(subHead.cells).forEach(function (col) {
+          if (String(subHead.cells[col]).trim() === "備考登録日時") C.noteDate = col;
+        });
+      }
+      // 備考登録日時の日付は mm/dd で表示する。列幅は元の表示（before）と mm/dd の表示（after）を比べて縮める
+      rows.forEach(function (row) {
+        row.unitsOut = row.units;
+        var col = C.noteDate;
+        var short = row.nums[col] ? mmdd(row.cells[col], numFmts[row.styles[col]]) : null;
+        if (short == null) return;
+        row.disp[colIndex(col)].t = short;
+        if (col in row.units) {
+          row.unitsOut = {};
+          Object.keys(row.units).forEach(function (k) { row.unitsOut[k] = row.units[k]; });
+          row.unitsOut[col] = textUnits(short);
+        }
+      });
 
       var titleRow = rows[0] && rows[0].r < rows[headerIdx].r ? rows[0] : null;
       var title = titleRow ? String(titleRow.cells.A || "") : "";
@@ -928,7 +960,7 @@ button, select, input { font: inherit; color: inherit; }
       }).map(function (h) { return cols[h]; });
       var headerR = rows[headerIdx].r;
       var widthRows = rows.filter(function (row) { return row.r >= headerR; }).map(function (row) {
-        return { r: row.r, units: row.units };
+        return { r: row.r, units: row.units, unitsOut: row.unitsOut };
       });
 
       var mergeList = [];
@@ -987,8 +1019,9 @@ button, select, input { font: inherit; color: inherit; }
           var after = 0;
           model.widthRows.forEach(function (row) {
             var u = row.units[letter] || 0;
+            var o = row.unitsOut[letter] || 0;
             if (u > before) before = u;
-            if (kept(row.r) && u > after) after = u;
+            if (kept(row.r) && o > after) after = o;
           });
           var pad = 1.5; // 文字幅に比例しない余白ぶん
           if (after && after < before) width = pad + (width - pad) * after / before;
@@ -1235,6 +1268,54 @@ button, select, input { font: inherit; color: inherit; }
         return found;
       }
 
+      // 備考登録日時の日付は表示形式を mm/dd にした書式に替える（値は日付のまま）
+      var mmddId = null;
+      function mmddFmtId() {
+        if (mmddId != null) return mmddId;
+        var root = stylesDoc.documentElement;
+        var prefix = root.prefix ? root.prefix + ":" : "";
+        var numFmtsEl = firstNS(stylesDoc, "numFmts");
+        if (!numFmtsEl) {
+          numFmtsEl = stylesDoc.createElementNS(NS_MAIN, prefix + "numFmts");
+          root.insertBefore(numFmtsEl, root.firstChild);
+        }
+        var maxId = 163; // 164 からがユーザー定義の表示形式
+        children(numFmtsEl, "numFmt").forEach(function (f) {
+          var id = parseInt(f.getAttribute("numFmtId"), 10);
+          if (f.getAttribute("formatCode") === MMDD) mmddId = id;
+          if (id > maxId) maxId = id;
+        });
+        if (mmddId == null) {
+          mmddId = maxId + 1;
+          var f = stylesDoc.createElementNS(NS_MAIN, prefix + "numFmt");
+          f.setAttribute("numFmtId", String(mmddId));
+          f.setAttribute("formatCode", MMDD);
+          numFmtsEl.appendChild(f);
+          numFmtsEl.setAttribute("count", String(children(numFmtsEl, "numFmt").length));
+        }
+        return mmddId;
+      }
+      var fmtCache = new Map();
+      function refmt(s) {
+        var xf = xfs[s];
+        var id = xf ? parseInt(xf.getAttribute("numFmtId") || "0", 10) : 0;
+        if (id !== 14 && id !== 22) return s;
+        if (fmtCache.has(s)) return fmtCache.get(s);
+        var c = xf.cloneNode(true);
+        c.setAttribute("numFmtId", String(mmddFmtId()));
+        c.setAttribute("applyNumberFormat", "1");
+        var found = fulls.indexOf(ser.serializeToString(c));
+        if (found < 0) {
+          var k = c.cloneNode(true);
+          k.removeAttribute("fillId");
+          k.removeAttribute("applyFill");
+          found = addXf(c, ser.serializeToString(k));
+        }
+        fmtCache.set(s, found);
+        return found;
+      }
+      var noteDateCol = model.cols.noteDate;
+
       // 列幅
       var widths = outputWidths(model, function (r) { return rowMap.has(r); });
       var colsEl = firstNS(sheetDoc, "cols");
@@ -1326,6 +1407,12 @@ button, select, input { font: inherit; color: inherit; }
         children(rowEl, "c").forEach(function (c) {
           var ref = splitRef(c.getAttribute("r") || "");
           if (ref) c.setAttribute("r", ref.col + newR);
+          var t = c.getAttribute("t");
+          if (stylesDoc && ref && ref.col === noteDateCol && (!t || t === "n") && children(c, "v").length) {
+            var s0 = parseInt(c.getAttribute("s") || "0", 10);
+            var s1 = refmt(s0);
+            if (s1 !== s0) c.setAttribute("s", String(s1));
+          }
           if (band != null && model.bandFills.length) {
             var s = parseInt(c.getAttribute("s") || "0", 10);
             var ns = restyle(s, model.bandFills[band]);
