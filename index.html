@@ -1007,24 +1007,49 @@ button, select, input { font: inherit; color: inherit; }
       };
     }
 
-    // 列幅：残った中身が元より短い列だけ、比率で縮める（広げることはしない）
+    // 確認事項・エリアは、見出しかこの文字数ぶんまでの幅にする。長い記入は列の中で折り返す
+    var FLEX_CAP_EM = 5;
+
+    // 残る行のうち、その列だけのセル（横に結合したセルは除く）の文字幅の最大（px、メイリオUI 11pt）。head は見出しの行だけ
+    function contentPx(model, i, kept) {
+      var spanned = {};
+      model.mergeList.forEach(function (m) {
+        if (m.c1 === m.c2 || i < m.c1 || i > m.c2) return;
+        for (var r = m.r1; r <= m.r2; r++) spanned[r] = true;
+      });
+      var out = { all: 0, head: 0 };
+      model.disp.forEach(function (cells, r) {
+        if (r < model.headerR || !kept(r) || spanned[r]) return;
+        var d = cells[i];
+        if (!d || d.t === "") return;
+        var px = textEm(tidyNote(d.t), d.b) * EM_PX;
+        if (px > out.all) out.all = px;
+        if (model.headerRows.indexOf(r) >= 0 && px > out.head) out.head = px;
+      });
+      return out;
+    }
+    // 文字幅（px）→ 列幅。列幅の単位は数字1文字 = 7px。
+    // 行の高さを決める折り返しの見積もり（wrapLines：使える幅 = (列の px − 7) × 0.97）で1行に収まる幅に、少し余裕を足す
+    function colWidthFor(px) { return (px / 0.97 + 7) / 7 + 0.5; }
+
+    // 列幅：残った中身が元より短い列だけ縮める（広げることはしない）
     function outputWidths(model, kept) {
+      var flexCols = [model.cols.status, model.cols.area];
       var out = {};
       Object.keys(model.colWidths).forEach(function (k) {
         var i = parseInt(k, 10);
         var width = model.colWidths[i];
         var letter = colName(i);
-        if (letter === model.cols.noteDate) {
-          // 備考登録日時は mm/dd にして元の表示よりずっと短くなるので、元の幅との比ではなく、
-          // 残る中身（見出しを含む）の文字幅から直接決める（元より広げることはしない）
-          var px = 0;
-          model.disp.forEach(function (cells, r) {
-            if (r < model.headerR || !kept(r)) return;
-            var d = cells[i];
-            if (d && d.t !== "") px = Math.max(px, textEm(d.t, d.b) * EM_PX);
-          });
-          // 列幅の単位は数字1文字 = 7px。セルの左右の余白と見積もりの誤差のぶんを足す
-          if (px) width = Math.min(width, (px + 6) / 7 + 0.5);
+        if (letter === model.cols.noteDate || model.cols.next.indexOf(letter) >= 0) {
+          // 備考登録日時（mm/dd にして元の表示よりずっと短い）と次講座は、元の幅との比ではなく、
+          // 残る中身（見出しを含む）の文字幅から直接決める
+          var px = contentPx(model, i, kept).all;
+          if (px) width = Math.min(width, colWidthFor(px));
+        } else if (flexCols.indexOf(letter) >= 0) {
+          // 確認事項・エリアは、1〜2件の長い記入に合わせて広げない（見出しか5文字ぶんまで。長い記入は折り返す）
+          var c = contentPx(model, i, kept);
+          var capPx = Math.max(c.head, FLEX_CAP_EM * EM_PX);
+          if (c.all) width = Math.min(width, colWidthFor(Math.min(c.all, capPx)));
         } else if (model.autoCols.indexOf(letter) >= 0) {
           var before = 0;
           var after = 0;
@@ -1129,6 +1154,8 @@ button, select, input { font: inherit; color: inherit; }
       visible.forEach(function (i) {
         if (i === noteCol || i === memoCol || nextCols.indexOf(i) >= 0) return;
         w[i] = Math.max(need[i] || 0, 1.5);
+        // 確認事項・エリアは、1〜2件の長い記入に合わせて広げない（見出しか5文字ぶんまで。長い記入は折り返す）
+        if (keepOneLine.indexOf(i) < 0) w[i] = Math.min(w[i], Math.max(headNeed[i] || 0, FLEX_CAP_EM));
       });
       spanNeed.forEach(function (sp) {
         var sum = 0;
@@ -1333,8 +1360,19 @@ button, select, input { font: inherit; color: inherit; }
       if (colsEl) {
         children(colsEl, "col").forEach(function (colEl) {
           var min = parseInt(colEl.getAttribute("min"), 10);
-          if (min !== parseInt(colEl.getAttribute("max"), 10) || !widths[min]) return;
-          if (widths[min] !== model.colWidths[min]) colEl.setAttribute("width", widths[min].toFixed(6));
+          var max = parseInt(colEl.getAttribute("max"), 10);
+          if (!(min <= max)) return;
+          var changed = false;
+          for (var i = min; i <= max; i++) if (widths[i] && widths[i] !== model.colWidths[i]) changed = true;
+          if (!changed) return;
+          // 何列かまとめて定義されている（例：次講座①〜③）ときは、1列ずつに分けてから幅を変える
+          for (var j = min; j <= max; j++) {
+            var one = j === max ? colEl : colEl.cloneNode(true);
+            one.setAttribute("min", String(j));
+            one.setAttribute("max", String(j));
+            if (widths[j] && widths[j] !== model.colWidths[j]) one.setAttribute("width", widths[j].toFixed(6));
+            if (one !== colEl) colsEl.insertBefore(one, colEl);
+          }
         });
       }
       // 列幅の単位は既定フォント（Calibri 11）の数字1文字 = 7px
@@ -1352,6 +1390,7 @@ button, select, input { font: inherit; color: inherit; }
       var PAD_PT = 3;
       var noteC1 = colIndex(model.cols.course);
       var noteC2 = model.cols.next.reduce(function (m, c) { return Math.max(m, colIndex(c)); }, noteC1);
+      var flexIdx = [model.cols.status, model.cols.area].filter(Boolean).map(colIndex);
       var mergesByRow = new Map();
       model.mergeList.forEach(function (m) {
         if (m.r1 !== m.r2) return;
@@ -1376,6 +1415,7 @@ button, select, input { font: inherit; color: inherit; }
           for (var i = sp.c1 + 1; i <= sp.c2; i++) covered[i] = true;
         });
         for (var j = noteC1; j <= noteC2; j++) if (!covered[j] && !(j in wrapPx)) wrapPx[j] = spanPx(j, j);
+        flexIdx.forEach(function (j) { if (!covered[j] && !(j in wrapPx)) wrapPx[j] = spanPx(j, j); });
 
         var lines = 1;
         Object.keys(wrapPx).forEach(function (k) {
