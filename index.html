@@ -1014,7 +1014,18 @@ button, select, input { font: inherit; color: inherit; }
         var i = parseInt(k, 10);
         var width = model.colWidths[i];
         var letter = colName(i);
-        if (model.autoCols.indexOf(letter) >= 0) {
+        if (letter === model.cols.noteDate) {
+          // 備考登録日時は mm/dd にして元の表示よりずっと短くなるので、元の幅との比ではなく、
+          // 残る中身（見出しを含む）の文字幅から直接決める（元より広げることはしない）
+          var px = 0;
+          model.disp.forEach(function (cells, r) {
+            if (r < model.headerR || !kept(r)) return;
+            var d = cells[i];
+            if (d && d.t !== "") px = Math.max(px, textEm(d.t, d.b) * EM_PX);
+          });
+          // 列幅の単位は数字1文字 = 7px。セルの左右の余白と見積もりの誤差のぶんを足す
+          if (px) width = Math.min(width, (px + 6) / 7 + 0.5);
+        } else if (model.autoCols.indexOf(letter) >= 0) {
           var before = 0;
           var after = 0;
           model.widthRows.forEach(function (row) {
