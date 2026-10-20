@@ -208,6 +208,8 @@ button, select, input { font: inherit; color: inherit; }
 /* 書き出し */
 .bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
 .bar h2 { margin: 0; font-size: 18px; }
+.bar h3 { margin: 0; font-size: 16px; }
+.bar.split { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 4px; }
 .bar p { margin: 0; font-size: 13px; color: var(--muted); }
 .btn {
   border: 0;
@@ -447,14 +449,20 @@ button, select, input { font: inherit; color: inherit; }
     <div class="bar">
       <div>
         <h2 id="outTitle">印刷・保存</h2>
-        <p>並び順は元のファイルのまま、灰色・白の色分けは時間帯ごとに先頭から振り直します。まとめて印刷すると、時間帯ごとに改ページします。</p>
+        <p>並び順は元のファイルのまま、灰色・白の色分けは一覧ごとに先頭から振り直します。</p>
+      </div>
+    </div>
+    <article class="whole" id="whole" aria-label="分けずに1つにまとめた一覧" hidden></article>
+    <div class="bar split">
+      <div>
+        <h3>朝・昼・晩に分ける</h3>
+        <p>まとめて印刷すると、時間帯ごとに改ページします。</p>
       </div>
       <div class="acts">
         <button type="button" class="btn" id="printAll" disabled>まとめて印刷</button>
         <button type="button" class="btn ghost" id="saveAll" disabled>3つともExcelで保存</button>
       </div>
     </div>
-    <article class="whole" id="whole" aria-label="分けずに1つにまとめた一覧" hidden></article>
     <div class="slots" id="slots"></div>
   </section>
 
