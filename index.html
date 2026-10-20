@@ -425,8 +425,8 @@ button, select, input { font: inherit; color: inherit; }
       <div>
         <p class="label">印刷の向き（A4）</p>
         <div class="seg" role="radiogroup" aria-label="印刷の向き">
-          <label><input type="radio" name="orient" id="orientLandscape" value="landscape"><span>横（文字 8.5pt）</span></label>
           <label><input type="radio" name="orient" id="orientPortrait" value="portrait"><span>縦（文字 約6.2pt）</span></label>
+          <label><input type="radio" name="orient" id="orientLandscape" value="landscape"><span>横（文字 8.5pt）</span></label>
         </div>
       </div>
       <div>
@@ -1734,12 +1734,13 @@ button, select, input { font: inherit; color: inherit; }
   var ALL = "all"; // 朝・昼・晩に分けず、全員を1つにまとめる
   var ALL_LABEL = "全員";
   var STORE_KEY = "yoyaku-split-settings";
+  var SETTINGS_VERSION = 2; // 既定の向き・印刷に入れる列を変えたときに上げる
 
   var st = {
     model: null, fileName: "", sample: false, result: null, busy: false,
-    ends: [780, 1020], rule: "overlap", orient: "landscape",
+    ends: [780, 1020], rule: "overlap", orient: "portrait",
     pages: 0, // 印刷を何枚に収めるか（0 は文字の大きさそのまま）
-    printCols: { next3: false, memo: false }, // 印刷に入れるかどうか（初期は入れない）
+    printCols: { next3: true, memo: false }, // 印刷に入れるかどうか（初期は次講座③だけ入れる）
   };
   // 印刷の向きごとの用紙の印字幅（文字サイズ 1em 単位）。A4 から余白 8mm×2 を引いた幅を少し狭めに見積もる
   var PAGE = {
@@ -1754,17 +1755,19 @@ button, select, input { font: inherit; color: inherit; }
     var saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
     if (saved && Array.isArray(saved.ends) && saved.ends[0] < saved.ends[1]) st.ends = saved.ends.slice(0, 2);
     if (saved && (saved.rule === "overlap" || saved.rule === "start")) st.rule = saved.rule;
-    if (saved && PAGE[saved.orient]) st.orient = saved.orient;
+    // 印刷の向きと印刷に入れる列は既定を変えた（縦・次講座③あり）ので、それより前に保存した値は使わない
+    var current = saved && saved.v >= SETTINGS_VERSION;
+    if (current && PAGE[saved.orient]) st.orient = saved.orient;
     if (saved && saved.pages >= 0 && saved.pages <= MAX_PAGES && saved.pages % 1 === 0) st.pages = saved.pages;
     else if (saved && saved.fit === true) st.pages = 1; // 以前の「1枚に収める」の設定
-    if (saved && saved.printCols) {
+    if (current && saved.printCols) {
       st.printCols = { next3: saved.printCols.next3 === true, memo: saved.printCols.memo === true };
     }
   } catch (e) { /* 保存できない環境では既定値のまま */ }
 
   function remember() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ ends: st.ends, rule: st.rule, orient: st.orient, pages: st.pages, printCols: st.printCols }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ v: SETTINGS_VERSION, ends: st.ends, rule: st.rule, orient: st.orient, pages: st.pages, printCols: st.printCols }));
     } catch (e) { /* noop */ }
   }
 
