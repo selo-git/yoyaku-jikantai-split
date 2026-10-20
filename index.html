@@ -658,6 +658,8 @@ button, select, input { font: inherit; color: inherit; }
 
     // 備考登録日時の表示（年と時刻は出さず 10/13 の形）。日付のセルでなければ null
     var MMDD = "mm/dd";
+    // 見出しは2行にして、列幅を上の「終了時間」と同じくらいまで詰める
+    var NOTE_DATE_HEAD = "備考\n登録日時";
     function mmdd(raw, numFmtId) {
       var n = parseFloat(raw);
       if (isNaN(n) || (numFmtId !== 14 && numFmtId !== 22)) return null;
@@ -868,10 +870,14 @@ button, select, input { font: inherit; color: inherit; }
       };
       // 備考登録日時の列（見出しの2段目）。なければ終了時間と同じ列
       C.noteDate = C.end;
+      C.noteDateHead = 0; // 「備考登録日時」の見出しの行
       var subHead = rows[headerIdx + 1];
       if (subHead) {
         Object.keys(subHead.cells).forEach(function (col) {
-          if (String(subHead.cells[col]).trim() === "備考登録日時") C.noteDate = col;
+          if (String(subHead.cells[col]).trim() !== "備考登録日時") return;
+          C.noteDate = col;
+          C.noteDateHead = subHead.r;
+          subHead.disp[colIndex(col)].t = NOTE_DATE_HEAD;
         });
       }
       // 備考登録日時の日付は mm/dd で表示する。列幅は元の表示（before）と mm/dd の表示（after）を比べて縮める
@@ -1442,10 +1448,31 @@ button, select, input { font: inherit; color: inherit; }
         });
       }
 
+      // 「備考登録日時」の見出しを「備考／登録日時」の2行で折り返し、その行を2行ぶんの高さにする
+      function splitNoteDateHead(rowEl) {
+        children(rowEl, "c").forEach(function (c) {
+          var ref = splitRef(c.getAttribute("r") || "");
+          var v = children(c, "v")[0];
+          if (!ref || ref.col !== noteDateCol || c.getAttribute("t") !== "s" || !v) return;
+          headStrings.add(parseInt(v.textContent, 10));
+          if (stylesDoc) {
+            var s = parseInt(c.getAttribute("s") || "0", 10);
+            var ns = realign(s, true, false);
+            if (ns !== s) c.setAttribute("s", String(ns));
+          }
+          var ht = 2 * LINE_PT + PAD_PT;
+          if (!(parseFloat(rowEl.getAttribute("ht")) >= ht)) {
+            rowEl.setAttribute("ht", String(ht));
+            rowEl.setAttribute("customHeight", "1");
+          }
+        });
+      }
+
       // 行の削除・番号の振り直し・塗り分けの振り直し
       var sheetData = firstNS(sheetDoc, "sheetData");
       var usedStrings = new Map();
       var stringRefs = 0;
+      var headStrings = new Set(); // 「備考登録日時」の見出しの文字列（2行にする）
       children(sheetData, "row").forEach(function (rowEl) {
         var oldR = parseInt(rowEl.getAttribute("r"), 10);
         if (!rowMap.has(oldR)) {
@@ -1471,6 +1498,7 @@ button, select, input { font: inherit; color: inherit; }
           }
         });
         if (stylesDoc && band != null) layoutRow(rowEl, oldR);
+        if (oldR === model.cols.noteDateHead) splitNoteDateHead(rowEl);
         children(rowEl, "c").forEach(function (c) {
           if (sstDoc && c.getAttribute("t") === "s") {
             var v = children(c, "v")[0];
@@ -1526,6 +1554,9 @@ button, select, input { font: inherit; color: inherit; }
           var ts = children(si, "t");
           if (trimSet.has(old) && ts.length === 1 && !children(si, "r").length) {
             ts[0].textContent = tidyNote(ts[0].textContent);
+          }
+          if (headStrings.has(old) && ts.length === 1 && !children(si, "r").length) {
+            ts[0].textContent = NOTE_DATE_HEAD;
           }
           sstRoot.appendChild(si);
         });
